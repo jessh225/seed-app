@@ -1,0 +1,2175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Seed 🌱</title>
+  
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Seed">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap');
+    body { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+    input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0; position: absolute; right: 0; width: 100%; height: 100%; cursor: pointer; }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+  </style>
+</head>
+<body class="bg-slate-900">
+  <div id="root">
+    <div style="min-height: 100vh; background: #0f172a; display: flex; align-items: center; justify-content: center;">
+      <div style="text-align: center;">
+        <div style="font-size: 48px; margin-bottom: 12px;">🌱</div>
+        <div style="color: #64748b; font-size: 14px;">Loading...</div>
+      </div>
+    </div>
+  </div>
+  
+  <script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// Supabase 配置
+const SUPABASE_URL = 'https://tmexfyneflagcklgpnam.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtZXhmeW5lZmxhZ2NrbGdwbmFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0OTY1MDgsImV4cCI6MjA4MzA3MjUwOH0.5PX7dSfS-ZdQ9_nAnNQuDGU_OcHNZXmkwfrKVT0Ov8k';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ============================================
+// Login Screen Component
+// ============================================
+const LoginScreen = ({ onLogin }) => {
+  const [step, setStep] = useState('choose'); // 'choose', 'login', 'signup', 'forgot', 'reset-password'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('error');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  
+  // Check for password reset token in URL
+  useEffect(() => {
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const type = hashParams.get('type');
+    const accessToken = hashParams.get('access_token');
+    const queryParams = new URLSearchParams(window.location.search);
+    const code = queryParams.get('code');
+    
+    if (type === 'recovery' && accessToken) {
+      setStep('reset-password');
+      setMessage('请设置新密码');
+      setMessageType('success');
+      window.history.replaceState(null, '', window.location.pathname);
+    } else if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+        if (!error && data?.session) {
+          const isRecovery = data.session.user?.recovery_sent_at;
+          if (isRecovery) {
+            setStep('reset-password');
+            setMessage('请设置新密码');
+            setMessageType('success');
+          }
+        }
+        window.history.replaceState(null, '', window.location.pathname);
+      });
+    }
+  }, []);
+  
+  // Check for pre-filled email
+  useEffect(() => {
+    const prefillEmail = localStorage.getItem('seed-prefill-email');
+    if (prefillEmail) {
+      setEmail(prefillEmail);
+      setStep('login');
+      localStorage.removeItem('seed-prefill-email');
+    }
+  }, []);
+  
+  const handleGuestLogin = () => {
+    // 使用本地游客模式，数据存储在 localStorage
+    const guestUser = {
+      id: 'local-guest-' + Date.now(),
+      is_anonymous: true,
+      is_local_guest: true
+    };
+    localStorage.setItem('seed-local-guest', JSON.stringify(guestUser));
+    window.location.reload();
+  };
+  
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password) {
+      setMessage('请填写邮箱和密码');
+      setMessageType('error');
+      return;
+    }
+    
+    setLoading(true);
+    setMessage('');
+    
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password
+      });
+      
+      if (error) {
+        if (error.message.includes('Invalid login')) {
+          setMessage('邮箱或密码错误');
+        } else {
+          setMessage('登录失败: ' + error.message);
+        }
+        setMessageType('error');
+      }
+    } catch (err) {
+      setMessage('网络错误，请重试');
+      setMessageType('error');
+    }
+    setLoading(false);
+  };
+  
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password || !confirmPassword) {
+      setMessage('请填写所有字段');
+      setMessageType('error');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setMessage('两次密码不一致');
+      setMessageType('error');
+      return;
+    }
+    if (password.length < 6) {
+      setMessage('密码至少6位');
+      setMessageType('error');
+      return;
+    }
+    
+    setLoading(true);
+    setMessage('');
+    
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password,
+        options: { emailRedirectTo: window.location.origin }
+      });
+      
+      if (error) {
+        if (error.message.includes('already registered')) {
+          setMessage('此邮箱已注册，请登录');
+        } else {
+          setMessage('注册失败: ' + error.message);
+        }
+        setMessageType('error');
+        setLoading(false);
+        return;
+      }
+      
+      if (data?.session) {
+        setMessage('✅ 注册成功！正在登录...');
+        setMessageType('success');
+      } else if (data?.user) {
+        setMessage('✅ 账号已创建！请查看邮箱确认后登录');
+        setMessageType('success');
+        setTimeout(() => {
+          setStep('login');
+          setMessage('请输入密码登录');
+          setMessageType('error');
+        }, 3000);
+      }
+    } catch (err) {
+      setMessage('网络错误，请重试');
+      setMessageType('error');
+    }
+    setLoading(false);
+  };
+  
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    
+    setLoading(true);
+    setMessage('');
+    
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin
+    });
+    
+    if (error) {
+      setMessage('发送失败，请重试');
+      setMessageType('error');
+    } else {
+      setMessage('✅ 重置邮件已发送，请查看邮箱');
+      setMessageType('success');
+    }
+    setLoading(false);
+  };
+  
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!newPassword || !confirmNewPassword) {
+      setMessage('请填写新密码');
+      setMessageType('error');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setMessage('两次密码不一致');
+      setMessageType('error');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setMessage('密码至少6位');
+      setMessageType('error');
+      return;
+    }
+    
+    setLoading(true);
+    setMessage('');
+    
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        setMessage('重置失败: ' + error.message);
+        setMessageType('error');
+      } else {
+        setMessage('✅ 密码已重置！正在登录...');
+        setMessageType('success');
+        setTimeout(() => window.location.reload(), 1500);
+      }
+    } catch (err) {
+      setMessage('网络错误，请重试');
+      setMessageType('error');
+    }
+    setLoading(false);
+  };
+  
+  const resetForm = () => {
+    setPassword('');
+    setConfirmPassword('');
+    setMessage('');
+  };
+  
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+      <div className="bg-slate-800 rounded-2xl shadow-xl p-8 w-full max-w-sm border border-slate-700 animate-fade-in">
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-3">🌱</div>
+          <h1 className="text-2xl font-semibold text-white">Seed</h1>
+          <p className="text-slate-400 text-sm mt-1">Seeds → Projects → Reality</p>
+        </div>
+        
+        {step === 'choose' && (
+          <>
+            <button
+              onClick={() => { setStep('login'); resetForm(); }}
+              className="w-full py-4 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors mb-3"
+            >
+              登录
+            </button>
+            <button
+              onClick={() => { setStep('signup'); resetForm(); }}
+              className="w-full py-4 rounded-xl bg-slate-700 text-white font-medium hover:bg-slate-600 transition-colors mb-3"
+            >
+              注册账号
+            </button>
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-600"></div>
+              </div>
+              <div className="relative flex justify-center">
+                <span className="px-3 bg-slate-800 text-slate-500 text-sm">或</span>
+              </div>
+            </div>
+            <button
+              onClick={handleGuestLogin}
+              disabled={loading}
+              className="w-full py-3 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50"
+            >
+              {loading ? '进入中...' : '游客模式 (数据仅存本地)'}
+            </button>
+          </>
+        )}
+        
+        {step === 'login' && (
+          <form onSubmit={handleLogin}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="邮箱"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-3"
+              autoFocus
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="密码"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-4 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50 mb-3"
+            >
+              {loading ? '登录中...' : '登录'}
+            </button>
+            <div className="flex justify-between">
+              <button type="button" onClick={() => { setStep('choose'); resetForm(); }} className="text-slate-400 text-sm hover:text-white">
+                ← 返回
+              </button>
+              <button type="button" onClick={() => { setStep('forgot'); setMessage(''); }} className="text-slate-400 text-sm hover:text-white">
+                忘记密码?
+              </button>
+            </div>
+          </form>
+        )}
+        
+        {step === 'signup' && (
+          <form onSubmit={handleSignup}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="邮箱"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-3"
+              autoFocus
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="密码 (至少6位)"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-3"
+            />
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="确认密码"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-4 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50 mb-3"
+            >
+              {loading ? '注册中...' : '注册'}
+            </button>
+            <button type="button" onClick={() => { setStep('choose'); resetForm(); }} className="w-full text-slate-400 text-sm hover:text-white">
+              ← 返回
+            </button>
+          </form>
+        )}
+        
+        {step === 'forgot' && (
+          <form onSubmit={handleForgotPassword}>
+            <p className="text-slate-400 text-sm mb-4 text-center">输入邮箱，我们会发送重置链接</p>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="邮箱"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-4 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50 mb-3"
+            >
+              {loading ? '发送中...' : '发送重置邮件'}
+            </button>
+            <button type="button" onClick={() => { setStep('login'); setMessage(''); }} className="w-full text-slate-400 text-sm hover:text-white">
+              ← 返回登录
+            </button>
+          </form>
+        )}
+        
+        {step === 'reset-password' && (
+          <form onSubmit={handleResetPassword}>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="新密码 (至少6位)"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-3"
+              autoFocus
+            />
+            <input
+              type="password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+              placeholder="确认新密码"
+              className="w-full px-4 py-3 rounded-xl bg-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-4 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50"
+            >
+              {loading ? '重置中...' : '重置密码'}
+            </button>
+          </form>
+        )}
+        
+        {message && (
+          <div className={`mt-4 p-3 rounded-lg text-sm text-center whitespace-pre-wrap ${
+            messageType === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-emerald-500/20 text-emerald-300'
+          }`}>
+            {message}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// Main App Component
+// ============================================
+const SeedApp = ({ user, initialShowPasswordReset = false }) => {
+  const [projects, setProjects] = useState([]);
+  const [ideas, setIdeas] = useState([]);
+  const [activeTab, setActiveTab] = useState('ideas');
+  const [newIdeaText, setNewIdeaText] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
+  
+  // Password reset modal
+  const [showPasswordReset, setShowPasswordReset] = useState(initialShowPasswordReset);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState(initialShowPasswordReset ? '请设置新密码' : '');
+  const [newItemTexts, setNewItemTexts] = useState({});
+  const [moveMenuOpen, setMoveMenuOpen] = useState(null);
+  const [detailView, setDetailView] = useState(null);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [isAddingProject, setIsAddingProject] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Upgrade account state (for anonymous users)
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [upgradeEmail, setUpgradeEmail] = useState('');
+  const [upgradePassword, setUpgradePassword] = useState('');
+  const [upgradeConfirmPassword, setUpgradeConfirmPassword] = useState('');
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeMessage, setUpgradeMessage] = useState('');
+  const [upgradeMessageType, setUpgradeMessageType] = useState('error');
+  
+  // Login modal state
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginMessage, setLoginMessage] = useState('');
+  const [loginStep, setLoginStep] = useState('login'); // 'login', 'forgot'
+
+  const isAnonymous = user?.is_anonymous || (!user?.email && user?.id);
+  const isLocalGuest = user?.is_local_guest === true;
+
+  // Local storage helpers for guest mode
+  const saveLocalData = (ideasData, projectsData) => {
+    localStorage.setItem('seed-local-ideas', JSON.stringify(ideasData));
+    localStorage.setItem('seed-local-projects', JSON.stringify(projectsData));
+  };
+
+  // Load data on mount
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    
+    if (isLocalGuest) {
+      // Load from localStorage for guest
+      try {
+        const localIdeas = JSON.parse(localStorage.getItem('seed-local-ideas') || '[]');
+        const localProjects = JSON.parse(localStorage.getItem('seed-local-projects') || '[]');
+        setIdeas(localIdeas);
+        setProjects(localProjects);
+      } catch (e) {
+        setIdeas([]);
+        setProjects([]);
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Load from Supabase for logged-in users
+    try {
+      const { data: ideasData } = await supabase
+        .from('ideas')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      const { data: projectsData } = await supabase
+        .from('projects')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      const { data: itemsData } = await supabase
+        .from('project_items')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      const projectsWithItems = (projectsData || []).map(project => ({
+        ...project,
+        items: (itemsData || []).filter(item => item.project_id === project.id)
+      }));
+
+      setIdeas(ideasData || []);
+      setProjects(projectsWithItems);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+    setLoading(false);
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return null;
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  // === IDEAS ===
+  const addIdea = async () => {
+    if (!newIdeaText.trim()) return;
+    
+    if (isLocalGuest) {
+      const newIdea = { id: Date.now(), text: newIdeaText.trim(), notes: '', date: null, created_at: new Date().toISOString() };
+      const newIdeas = [newIdea, ...ideas];
+      setIdeas(newIdeas);
+      saveLocalData(newIdeas, projects);
+      setNewIdeaText('');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('ideas')
+      .insert({ text: newIdeaText.trim(), notes: '', date: null, user_id: user.id })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error adding idea:', error);
+      alert('添加失败: ' + error.message);
+    } else if (data) {
+      setIdeas([data, ...ideas]);
+      setNewIdeaText('');
+    }
+  };
+
+  const updateIdea = async (ideaId, updates) => {
+    const dbUpdates = { ...updates };
+    if (updates.date === '') dbUpdates.date = null;
+    
+    const newIdeas = ideas.map(idea => idea.id === ideaId ? { ...idea, ...updates } : idea);
+    setIdeas(newIdeas);
+    
+    if (isLocalGuest) {
+      saveLocalData(newIdeas, projects);
+      return;
+    }
+    
+    await supabase.from('ideas').update(dbUpdates).eq('id', ideaId);
+  };
+
+  const deleteIdea = async (ideaId) => {
+    const newIdeas = ideas.filter(i => i.id !== ideaId);
+    setIdeas(newIdeas);
+    if (detailView?.id === ideaId) setDetailView(null);
+    
+    if (isLocalGuest) {
+      saveLocalData(newIdeas, projects);
+      return;
+    }
+    
+    await supabase.from('ideas').delete().eq('id', ideaId);
+  };
+
+  // === PROJECTS ===
+  const addProject = async () => {
+    if (!newProjectName.trim()) return;
+    const color = getRandomColor();
+    
+    if (isLocalGuest) {
+      const newProject = { id: Date.now(), name: newProjectName.trim(), color, items: [], created_at: new Date().toISOString() };
+      const newProjects = [...projects, newProject];
+      setProjects(newProjects);
+      saveLocalData(ideas, newProjects);
+      setNewProjectName('');
+      setIsAddingProject(false);
+      setActiveTab(newProject.id);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('projects')
+      .insert({ name: newProjectName.trim(), color, user_id: user.id })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error adding project:', error);
+      alert('创建项目失败: ' + error.message);
+      return;
+    }
+    
+    if (data) {
+      setProjects([...projects, { ...data, items: [] }]);
+      setNewProjectName('');
+      setIsAddingProject(false);
+      setActiveTab(data.id);
+    }
+  };
+
+  const updateProjectName = async (projectId, name) => {
+    const newProjects = projects.map(p => p.id === projectId ? { ...p, name } : p);
+    setProjects(newProjects);
+    
+    if (isLocalGuest) {
+      saveLocalData(ideas, newProjects);
+      return;
+    }
+    
+    await supabase.from('projects').update({ name }).eq('id', projectId);
+  };
+
+  const deleteProject = async (projectId) => {
+    const newProjects = projects.filter(p => p.id !== projectId);
+    setProjects(newProjects);
+    if (activeTab === projectId) setActiveTab('ideas');
+    
+    if (isLocalGuest) {
+      saveLocalData(ideas, newProjects);
+      return;
+    }
+    
+    await supabase.from('projects').delete().eq('id', projectId);
+  };
+
+  // === PROJECT ITEMS ===
+  const addItemToProject = async (projectId) => {
+    const text = newItemTexts[projectId];
+    if (!text?.trim()) return;
+    
+    if (isLocalGuest) {
+      const newItem = { id: Date.now(), project_id: projectId, text: text.trim(), notes: '', date: null, done: false, created_at: new Date().toISOString() };
+      const newProjects = projects.map(p => {
+        if (p.id === projectId) {
+          return { ...p, items: [newItem, ...p.items] };
+        }
+        return p;
+      });
+      setProjects(newProjects);
+      saveLocalData(ideas, newProjects);
+      setNewItemTexts({ ...newItemTexts, [projectId]: '' });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('project_items')
+      .insert({ project_id: projectId, text: text.trim(), notes: '', date: null, done: false, user_id: user.id })
+      .select()
+      .single();
+    
+    if (!error && data) {
+      setProjects(projects.map(p => {
+        if (p.id === projectId) {
+          return { ...p, items: [data, ...p.items] };
+        }
+        return p;
+      }));
+      setNewItemTexts({ ...newItemTexts, [projectId]: '' });
+    }
+  };
+
+  const updateItem = async (projectId, itemId, updates) => {
+    const dbUpdates = { ...updates };
+    if (updates.date === '') dbUpdates.date = null;
+    
+    const newProjects = projects.map(p => {
+      if (p.id === projectId) {
+        return { ...p, items: p.items.map(item => item.id === itemId ? { ...item, ...updates } : item) };
+      }
+      return p;
+    });
+    setProjects(newProjects);
+    
+    if (isLocalGuest) {
+      saveLocalData(ideas, newProjects);
+      return;
+    }
+    
+    await supabase.from('project_items').update(dbUpdates).eq('id', itemId);
+  };
+
+  const deleteItem = async (projectId, itemId) => {
+    const newProjects = projects.map(p => {
+      if (p.id === projectId) {
+        return { ...p, items: p.items.filter(item => item.id !== itemId) };
+      }
+      return p;
+    });
+    setProjects(newProjects);
+    if (detailView?.id === itemId) setDetailView(null);
+    
+    if (isLocalGuest) {
+      saveLocalData(ideas, newProjects);
+      return;
+    }
+    
+    await supabase.from('project_items').delete().eq('id', itemId);
+  };
+
+  // === MOVE OPERATIONS ===
+  const moveIdeaToProject = async (idea, projectId) => {
+    if (isLocalGuest) {
+      const newItem = { id: Date.now(), project_id: projectId, text: idea.text, notes: idea.notes || '', date: idea.date, done: false, created_at: new Date().toISOString() };
+      const newIdeas = ideas.filter(i => i.id !== idea.id);
+      const newProjects = projects.map(p => {
+        if (p.id === projectId) {
+          return { ...p, items: [newItem, ...p.items] };
+        }
+        return p;
+      });
+      setIdeas(newIdeas);
+      setProjects(newProjects);
+      saveLocalData(newIdeas, newProjects);
+      setMoveMenuOpen(null);
+      return;
+    }
+
+    const { data } = await supabase
+      .from('project_items')
+      .insert({ project_id: projectId, text: idea.text, notes: idea.notes || '', date: idea.date, done: false, user_id: user.id })
+      .select()
+      .single();
+    
+    if (data) {
+      await supabase.from('ideas').delete().eq('id', idea.id);
+      
+      setProjects(projects.map(p => {
+        if (p.id === projectId) {
+          return { ...p, items: [data, ...p.items] };
+        }
+        return p;
+      }));
+      setIdeas(ideas.filter(i => i.id !== idea.id));
+    }
+    setMoveMenuOpen(null);
+  };
+
+  const moveItemToIdeas = async (projectId, item) => {
+    if (isLocalGuest) {
+      const newIdea = { id: Date.now(), text: item.text, notes: item.notes || '', date: item.date, created_at: new Date().toISOString() };
+      const newIdeas = [newIdea, ...ideas];
+      const newProjects = projects.map(p => {
+        if (p.id === projectId) {
+          return { ...p, items: p.items.filter(i => i.id !== item.id) };
+        }
+        return p;
+      });
+      setIdeas(newIdeas);
+      setProjects(newProjects);
+      saveLocalData(newIdeas, newProjects);
+      setMoveMenuOpen(null);
+      return;
+    }
+
+    const { data } = await supabase
+      .from('ideas')
+      .insert({ text: item.text, notes: item.notes || '', date: item.date, user_id: user.id })
+      .select()
+      .single();
+    
+    if (data) {
+      await supabase.from('project_items').delete().eq('id', item.id);
+      
+      setIdeas([data, ...ideas]);
+      setProjects(projects.map(p => {
+        if (p.id === projectId) {
+          return { ...p, items: p.items.filter(i => i.id !== item.id) };
+        }
+        return p;
+      }));
+    }
+    setMoveMenuOpen(null);
+  };
+
+  const moveItemToProject = async (fromProjectId, item, toProjectId) => {
+    if (isLocalGuest) {
+      const newItem = { id: Date.now(), project_id: toProjectId, text: item.text, notes: item.notes || '', date: item.date, done: item.done, created_at: new Date().toISOString() };
+      const newProjects = projects.map(p => {
+        if (p.id === toProjectId) {
+          return { ...p, items: [newItem, ...p.items] };
+        }
+        if (p.id === fromProjectId) {
+          return { ...p, items: p.items.filter(i => i.id !== item.id) };
+        }
+        return p;
+      });
+      setProjects(newProjects);
+      saveLocalData(ideas, newProjects);
+      setMoveMenuOpen(null);
+      return;
+    }
+
+    const { data } = await supabase
+      .from('project_items')
+      .insert({ project_id: toProjectId, text: item.text, notes: item.notes || '', date: item.date, done: item.done, user_id: user.id })
+      .select()
+      .single();
+    
+    if (data) {
+      await supabase.from('project_items').delete().eq('id', item.id);
+      
+      setProjects(projects.map(p => {
+        if (p.id === toProjectId) {
+          return { ...p, items: [data, ...p.items] };
+        }
+        if (p.id === fromProjectId) {
+          return { ...p, items: p.items.filter(i => i.id !== item.id) };
+        }
+        return p;
+      }));
+    }
+    setMoveMenuOpen(null);
+  };
+
+  const ideaToProject = async (idea) => {
+    const color = getRandomColor();
+    
+    if (isLocalGuest) {
+      const newProject = { id: Date.now(), name: idea.text, color, items: [], created_at: new Date().toISOString() };
+      const newIdeas = ideas.filter(i => i.id !== idea.id);
+      const newProjects = [...projects, newProject];
+      setIdeas(newIdeas);
+      setProjects(newProjects);
+      saveLocalData(newIdeas, newProjects);
+      setActiveTab(newProject.id);
+      return;
+    }
+
+    const { data: projectData } = await supabase
+      .from('projects')
+      .insert({ name: idea.text, color, user_id: user.id })
+      .select()
+      .single();
+    
+    if (projectData) {
+      await supabase.from('ideas').delete().eq('id', idea.id);
+      setProjects([...projects, { ...projectData, items: [] }]);
+      setIdeas(ideas.filter(i => i.id !== idea.id));
+      setActiveTab(projectData.id);
+    }
+  };
+
+  const getRandomColor = () => {
+    const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6'];
+    return colors[Math.floor(Math.random() * colors.length)];
+  };
+
+  const getAllDatedItems = () => {
+    const items = [];
+    ideas.forEach(idea => {
+      if (idea.date) items.push({ ...idea, type: 'idea', color: '#f59e0b' });
+    });
+    projects.forEach(project => {
+      project.items.forEach(item => {
+        if (item.date) items.push({ ...item, type: 'item', projectId: project.id, projectName: project.name, color: project.color });
+      });
+    });
+    return items;
+  };
+
+  const getMonthDays = (date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const days = [];
+    for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
+    for (let i = 1; i <= lastDay.getDate(); i++) days.push(new Date(year, month, i));
+    return days;
+  };
+
+  const getItemsForDate = (date) => {
+    if (!date) return [];
+    const dateStr = date.toISOString().split('T')[0];
+    return getAllDatedItems().filter(item => item.date === dateStr);
+  };
+
+  const getMonthItemCount = () => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    return getAllDatedItems().filter(item => {
+      const d = new Date(item.date);
+      return d.getFullYear() === year && d.getMonth() === month;
+    }).length;
+  };
+
+  const handleLogout = async () => {
+    // 清除本地游客数据
+    localStorage.removeItem('seed-local-guest');
+    localStorage.removeItem('seed-local-ideas');
+    localStorage.removeItem('seed-local-projects');
+    
+    if (!isLocalGuest) {
+      await supabase.auth.signOut();
+    }
+    window.location.reload();
+  };
+  
+  // Upgrade anonymous account
+  const handleUpgradeAccount = async (e) => {
+    e.preventDefault();
+    if (!upgradeEmail.trim() || !upgradePassword || !upgradeConfirmPassword) {
+      setUpgradeMessage('请填写所有字段');
+      setUpgradeMessageType('error');
+      return;
+    }
+    if (upgradePassword !== upgradeConfirmPassword) {
+      setUpgradeMessage('两次密码不一致');
+      setUpgradeMessageType('error');
+      return;
+    }
+    if (upgradePassword.length < 6) {
+      setUpgradeMessage('密码至少6位');
+      setUpgradeMessageType('error');
+      return;
+    }
+    
+    setUpgradeLoading(true);
+    setUpgradeMessage('');
+    
+    try {
+      const oldUserId = user?.id;
+      
+      // Fetch current data
+      const { data: oldIdeas } = await supabase.from('ideas').select('*').eq('user_id', oldUserId);
+      const { data: oldProjects } = await supabase.from('projects').select('*').eq('user_id', oldUserId);
+      const { data: oldItems } = await supabase.from('project_items').select('*').eq('user_id', oldUserId);
+      
+      // Sign out anonymous
+      await supabase.auth.signOut();
+      
+      // Create new account
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: upgradeEmail.trim(),
+        password: upgradePassword
+      });
+      
+      if (signUpError) {
+        if (signUpError.message.includes('already registered')) {
+          setUpgradeMessage('此邮箱已注册，请直接登录');
+          localStorage.setItem('seed-prefill-email', upgradeEmail.trim());
+        } else {
+          setUpgradeMessage('失败: ' + signUpError.message);
+        }
+        setUpgradeMessageType('error');
+        setUpgradeLoading(false);
+        setTimeout(() => window.location.reload(), 2000);
+        return;
+      }
+      
+      const newUserId = signUpData?.user?.id;
+      
+      // If we have a session, migrate data
+      if (signUpData?.session && newUserId) {
+        // Migrate ideas
+        if (oldIdeas?.length) {
+          for (const idea of oldIdeas) {
+            await supabase.from('ideas').insert({
+              text: idea.text,
+              notes: idea.notes,
+              date: idea.date,
+              user_id: newUserId
+            });
+          }
+        }
+        
+        // Migrate projects and items
+        if (oldProjects?.length) {
+          for (const project of oldProjects) {
+            const { data: newProject } = await supabase.from('projects').insert({
+              name: project.name,
+              color: project.color,
+              user_id: newUserId
+            }).select().single();
+            
+            if (newProject) {
+              const projectItems = oldItems?.filter(i => i.project_id === project.id) || [];
+              for (const item of projectItems) {
+                await supabase.from('project_items').insert({
+                  project_id: newProject.id,
+                  text: item.text,
+                  notes: item.notes,
+                  date: item.date,
+                  done: item.done,
+                  user_id: newUserId
+                });
+              }
+            }
+          }
+        }
+        
+        setUpgradeMessage('✅ 账号创建成功！数据已同步');
+        setUpgradeMessageType('success');
+        setTimeout(() => window.location.reload(), 1500);
+      } else {
+        setUpgradeMessage('✅ 账号已创建！请查看邮箱确认后登录');
+        setUpgradeMessageType('success');
+        localStorage.setItem('seed-prefill-email', upgradeEmail.trim());
+        setTimeout(() => window.location.reload(), 3000);
+      }
+    } catch (err) {
+      setUpgradeMessage('错误: ' + err.message);
+      setUpgradeMessageType('error');
+    }
+    setUpgradeLoading(false);
+  };
+
+  // Handle login for existing account
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!loginEmail.trim() || !loginPassword) {
+      setLoginMessage('请填写邮箱和密码');
+      return;
+    }
+    
+    setLoginLoading(true);
+    setLoginMessage('');
+    
+    try {
+      // 清除本地游客数据
+      localStorage.removeItem('seed-local-guest');
+      localStorage.removeItem('seed-local-ideas');
+      localStorage.removeItem('seed-local-projects');
+      
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword
+      });
+      
+      if (error) {
+        if (error.message.includes('Invalid login')) {
+          setLoginMessage('邮箱或密码错误');
+        } else {
+          setLoginMessage('登录失败: ' + error.message);
+        }
+        setLoginLoading(false);
+        return;
+      }
+      
+      setLoginMessage('✅ 登录成功！');
+      setTimeout(() => window.location.reload(), 1000);
+    } catch (err) {
+      setLoginMessage('网络错误，请重试');
+    }
+    setLoginLoading(false);
+  };
+  
+  // Handle forgot password
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!loginEmail.trim()) {
+      setLoginMessage('请填写邮箱');
+      return;
+    }
+    
+    setLoginLoading(true);
+    setLoginMessage('');
+    
+    const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
+      redirectTo: window.location.origin
+    });
+    
+    if (error) {
+      setLoginMessage('发送失败，请重试');
+    } else {
+      setLoginMessage('✅ 重置邮件已发送，请查看邮箱');
+    }
+    setLoginLoading(false);
+  };
+  
+  // Handle password reset (from email link)
+  const handlePasswordReset = async (e) => {
+    e.preventDefault();
+    if (!resetPassword || !resetConfirmPassword) {
+      setResetMessage('请填写新密码');
+      return;
+    }
+    if (resetPassword !== resetConfirmPassword) {
+      setResetMessage('两次密码不一致');
+      return;
+    }
+    if (resetPassword.length < 6) {
+      setResetMessage('密码至少6位');
+      return;
+    }
+    
+    setResetLoading(true);
+    setResetMessage('');
+    
+    try {
+      const { error } = await supabase.auth.updateUser({ password: resetPassword });
+      if (error) {
+        setResetMessage('重置失败: ' + error.message);
+      } else {
+        setResetMessage('✅ 密码已重置成功！');
+        setTimeout(() => {
+          setShowPasswordReset(false);
+          window.location.reload();
+        }, 1500);
+      }
+    } catch (err) {
+      setResetMessage('网络错误，请重试');
+    }
+    setResetLoading(false);
+  };
+
+  // Compact date input
+  const DateInput = ({ value, onChange }) => {
+    const formatted = formatDate(value);
+    return (
+      <label className="relative flex-shrink-0 cursor-pointer">
+        <input
+          type="date"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          className="absolute inset-0 opacity-0 cursor-pointer"
+        />
+        <span className={`flex items-center justify-center h-7 rounded-md transition-colors ${
+          formatted ? 'px-2 bg-slate-100 hover:bg-slate-200 text-[10px] text-slate-600' : 'w-7 bg-slate-50 hover:bg-slate-100 text-slate-400'
+        }`}>
+          {formatted || (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+            </svg>
+          )}
+        </span>
+      </label>
+    );
+  };
+
+  const MoveMenu = ({ onMoveToIdeas, onMoveToProject, currentProjectId }) => (
+    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-slate-100 py-1 z-50 min-w-[180px]">
+      {currentProjectId && (
+        <button onClick={onMoveToIdeas} className="w-full px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-2">
+          <div className="w-3 h-3 rounded bg-amber-400" />
+          <span>Seeds</span>
+        </button>
+      )}
+      {projects.filter(p => p.id !== currentProjectId).map(p => (
+        <button key={p.id} onClick={() => onMoveToProject(p.id)} className="w-full px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-2">
+          <div className="w-3 h-3 rounded" style={{ backgroundColor: p.color }} />
+          <span className="truncate">{p.name}</span>
+        </button>
+      ))}
+      {projects.length === 0 && !currentProjectId && (
+        <div className="px-3 py-2 text-xs text-slate-400">No projects</div>
+      )}
+    </div>
+  );
+
+  const TrashIcon = () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+    </svg>
+  );
+
+  const IdeasIcon = () => (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+    </svg>
+  );
+
+  const Checkbox = ({ checked, onChange }) => (
+    <button
+      onClick={onChange}
+      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+        checked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 hover:border-slate-400 bg-white'
+      }`}
+    >
+      {checked && (
+        <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      )}
+    </button>
+  );
+
+  const activeProject = projects.find(p => p.id === activeTab);
+
+  const getDetailItem = () => {
+    if (!detailView) return null;
+    if (detailView.type === 'idea') return ideas.find(i => i.id === detailView.id);
+    const project = projects.find(p => p.id === detailView.projectId);
+    return project?.items.find(i => i.id === detailView.id);
+  };
+
+  const detailItem = getDetailItem();
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-50">
+        <div className="text-slate-400">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen flex bg-slate-50 overflow-hidden" onClick={() => { setMoveMenuOpen(null); setSelectedDate(null); setShowSettings(false); }}>
+      
+      {/* Sidebar */}
+      <div className="flex flex-col py-2 gap-1.5 w-16 bg-slate-100">
+        <button
+          onClick={() => { setActiveTab('ideas'); setDetailView(null); }}
+          className={`mx-1.5 py-3 rounded-xl flex flex-col items-center justify-center transition-all ${
+            activeTab === 'ideas' 
+              ? 'bg-amber-500 text-white shadow-lg shadow-amber-200' 
+              : 'bg-white text-amber-600 hover:bg-amber-50'
+          }`}
+        >
+          <IdeasIcon />
+          <span className="text-[9px] font-medium mt-1">Seeds</span>
+        </button>
+
+        {projects.map(project => (
+          <button
+            key={project.id}
+            onClick={() => { setActiveTab(project.id); setDetailView(null); }}
+            className={`mx-1.5 py-3 rounded-xl flex flex-col items-center justify-center transition-all ${
+              activeTab === project.id ? 'text-white shadow-lg' : 'bg-white hover:opacity-80'
+            }`}
+            style={{ 
+              backgroundColor: activeTab === project.id ? project.color : 'white',
+              color: activeTab === project.id ? 'white' : project.color,
+              boxShadow: activeTab === project.id ? `0 10px 15px -3px ${project.color}40` : undefined
+            }}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+            </svg>
+            <span className="text-[9px] font-medium mt-1 truncate w-12 text-center">{project.name.slice(0, 6)}</span>
+          </button>
+        ))}
+
+        <button
+          onClick={() => { setActiveTab('calendar'); setDetailView(null); }}
+          className={`mx-1.5 py-3 rounded-xl flex flex-col items-center justify-center transition-all ${
+            activeTab === 'calendar' 
+              ? 'bg-slate-700 text-white shadow-lg shadow-slate-300' 
+              : 'bg-white text-slate-500 hover:bg-slate-50'
+          }`}
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+          </svg>
+          <span className="text-[9px] font-medium mt-1">Calendar</span>
+        </button>
+
+        <div className="flex-1" />
+
+        <button
+          onClick={() => setIsAddingProject(true)}
+          className="mx-1.5 py-3 rounded-xl flex flex-col items-center justify-center bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          <span className="text-[9px] font-medium mt-1">New</span>
+        </button>
+        
+        {/* Settings button */}
+        <div className="relative">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowSettings(!showSettings); }}
+            className="mx-1.5 py-3 rounded-xl flex flex-col items-center justify-center bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          
+          {showSettings && (
+            <div className="absolute left-full bottom-0 ml-2 bg-white rounded-xl shadow-xl border border-slate-200 py-2 min-w-[200px] z-50" onClick={e => e.stopPropagation()}>
+              <div className="px-4 py-2 border-b border-slate-100">
+                <div className="text-xs text-slate-400">登录为</div>
+                <div className="text-sm text-slate-700 truncate">
+                  {isAnonymous ? '游客' : user?.email}
+                </div>
+              </div>
+              
+              {isLocalGuest && (
+                <>
+                  <button
+                    onClick={() => { setShowSettings(false); setShowUpgrade(true); }}
+                    className="w-full px-4 py-2 text-left text-sm text-emerald-600 hover:bg-emerald-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z" />
+                    </svg>
+                    注册账号
+                  </button>
+                  <button
+                    onClick={() => { setShowSettings(false); setShowLogin(true); }}
+                    className="w-full px-4 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                    </svg>
+                    登录已有账号
+                  </button>
+                </>
+              )}
+              
+              {!isLocalGuest && (
+                <button
+                  onClick={handleLogout}
+                  className="w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+                  </svg>
+                  退出登录
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="flex-1 bg-white rounded-l-2xl shadow-sm overflow-hidden flex flex-col">
+        
+        {/* Detail view */}
+        {detailView && detailItem && (
+          <div className="flex-1 flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <button onClick={() => setDetailView(null)} className="text-xs text-slate-400 hover:text-slate-600">
+                ← Back
+              </button>
+              <DateInput
+                value={detailItem.date}
+                onChange={(date) => {
+                  if (detailView.type === 'idea') updateIdea(detailView.id, { date });
+                  else updateItem(detailView.projectId, detailView.id, { date });
+                }}
+              />
+            </div>
+
+            <div className="flex-1 flex flex-col p-4 overflow-hidden">
+              <div className="flex items-start gap-3 mb-4">
+                {detailView.type === 'item' && (
+                  <div className="mt-1">
+                    <Checkbox
+                      checked={detailItem.done}
+                      onChange={() => updateItem(detailView.projectId, detailView.id, { done: !detailItem.done })}
+                    />
+                  </div>
+                )}
+                <textarea
+                  value={detailItem.text}
+                  onChange={(e) => {
+                    if (detailView.type === 'idea') updateIdea(detailView.id, { text: e.target.value });
+                    else updateItem(detailView.projectId, detailView.id, { text: e.target.value });
+                  }}
+                  className={`flex-1 text-base font-medium bg-transparent focus:outline-none resize-none ${detailItem.done ? 'line-through text-slate-400' : 'text-slate-800'}`}
+                  placeholder="Title..."
+                  style={{ fieldSizing: 'content' }}
+                />
+              </div>
+
+              <textarea
+                value={detailItem.notes || ''}
+                onChange={(e) => {
+                  if (detailView.type === 'idea') updateIdea(detailView.id, { notes: e.target.value });
+                  else updateItem(detailView.projectId, detailView.id, { notes: e.target.value });
+                }}
+                placeholder="Add more details..."
+                className="flex-1 w-full text-sm text-slate-600 bg-slate-50 rounded-xl p-4 focus:outline-none resize-none whitespace-pre-wrap"
+              />
+
+              <div className="mt-3 pt-3 border-t border-slate-100">
+                <button
+                  onClick={() => {
+                    if (detailView.type === 'idea') deleteIdea(detailView.id);
+                    else deleteItem(detailView.projectId, detailView.id);
+                  }}
+                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-500"
+                >
+                  <TrashIcon />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Calendar view */}
+        {activeTab === 'calendar' && !detailView && (
+          <>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1))} className="p-1 text-slate-400 hover:text-slate-600 rounded">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <h1 className="text-sm font-semibold text-slate-800 min-w-[140px] text-center">
+                  {calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </h1>
+                <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1))} className="p-1 text-slate-400 hover:text-slate-600 rounded">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+              <span className="text-xs text-slate-400">{getMonthItemCount()} items</span>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-7 gap-1 mb-4">
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+                  <div key={i} className="text-[10px] text-slate-400 text-center py-1 font-medium">{day}</div>
+                ))}
+                {getMonthDays(calendarMonth).map((day, i) => {
+                  if (!day) return <div key={`empty-${i}`} />;
+                  const items = getItemsForDate(day);
+                  const isToday = day.toDateString() === new Date().toDateString();
+                  const dateStr = day.toISOString().split('T')[0];
+                  const isSelected = selectedDate === dateStr;
+                  
+                  return (
+                    <div key={day.toISOString()} className="relative">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSelectedDate(isSelected ? null : dateStr); }}
+                        className={`w-full aspect-square rounded-lg flex flex-col items-center justify-center transition-all ${
+                          isSelected ? 'bg-slate-700 text-white' :
+                          isToday ? 'bg-slate-100 ring-2 ring-slate-300' : 
+                          items.length > 0 ? 'bg-slate-50 hover:bg-slate-100' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className={`text-xs ${isSelected ? 'text-white font-bold' : isToday ? 'font-bold text-slate-800' : 'text-slate-600'}`}>
+                          {day.getDate()}
+                        </span>
+                        {items.length > 0 && !isSelected && (
+                          <div className="flex gap-0.5 mt-0.5">
+                            {items.slice(0, 3).map((item, j) => (
+                              <div key={j} className="w-1 h-1 rounded-full" style={{ backgroundColor: item.color }} />
+                            ))}
+                          </div>
+                        )}
+                      </button>
+                      
+                      {isSelected && items.length > 0 && (
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 bg-white rounded-lg shadow-lg border border-slate-100 py-1 z-50 min-w-[160px]" onClick={e => e.stopPropagation()}>
+                          {items.map(item => (
+                            <button
+                              key={item.id}
+                              onClick={() => setDetailView(item.type === 'idea' ? { type: 'idea', id: item.id } : { type: 'item', id: item.id, projectId: item.projectId })}
+                              className="w-full px-3 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                            >
+                              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                              <span className={`truncate ${item.done ? 'line-through text-slate-400' : ''}`}>{item.text.split('\n')[0]}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="border-t border-slate-100 pt-4">
+                <h2 className="text-xs font-medium text-slate-500 mb-2">Items this month</h2>
+                {getAllDatedItems()
+                  .filter(item => {
+                    const d = new Date(item.date);
+                    return d.getFullYear() === calendarMonth.getFullYear() && d.getMonth() === calendarMonth.getMonth();
+                  })
+                  .sort((a, b) => a.date.localeCompare(b.date))
+                  .map(item => (
+                    <div
+                      key={item.id}
+                      onClick={() => setDetailView(item.type === 'idea' ? { type: 'idea', id: item.id } : { type: 'item', id: item.id, projectId: item.projectId })}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-50 mb-1"
+                    >
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                      <span className="text-xs text-slate-400 w-12 flex-shrink-0">{formatDate(item.date)}</span>
+                      <span className={`flex-1 text-sm truncate ${item.done ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                        {item.text.split('\n')[0]}
+                      </span>
+                    </div>
+                  ))
+                }
+                {getMonthItemCount() === 0 && (
+                  <p className="text-sm text-slate-400 text-center py-4">No items this month</p>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Quick Ideas */}
+        {activeTab === 'ideas' && !detailView && (
+          <>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-amber-500 flex items-center justify-center text-white">
+                  <IdeasIcon />
+                </div>
+                <h1 className="text-sm font-semibold text-slate-800">Seeds</h1>
+              </div>
+              <span className="text-xs text-slate-400">{ideas.length}</span>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto">
+              <div className="px-4 py-3 border-b border-slate-100 bg-amber-50/50">
+                <div className="flex items-start gap-2">
+                  <textarea
+                    value={newIdeaText}
+                    onChange={(e) => setNewIdeaText(e.target.value)}
+                    rows={1}
+                    placeholder="Plant a seed..."
+                    className="flex-1 bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed"
+                    style={{ fieldSizing: 'content' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addIdea(); } }}
+                  />
+                  <button
+                    onClick={addIdea}
+                    disabled={!newIdeaText.trim()}
+                    className="px-3 py-1 rounded-md text-xs bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {ideas.map(idea => (
+                <div key={idea.id} className="border-b border-slate-50">
+                  <div className="px-4 py-2 flex items-start gap-2">
+                    <textarea
+                      value={idea.text}
+                      onChange={(e) => updateIdea(idea.id, { text: e.target.value })}
+                      rows={1}
+                      className="flex-1 bg-transparent text-sm text-slate-700 focus:outline-none min-w-0 resize-none leading-relaxed"
+                      style={{ fieldSizing: 'content' }}
+                    />
+
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => setDetailView({ type: 'idea', id: idea.id })}
+                        className={`w-7 h-7 rounded flex items-center justify-center ${idea.notes ? 'text-slate-600 bg-slate-100' : 'text-slate-300 hover:text-slate-500 hover:bg-slate-50'}`}
+                        title="Notes"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                        </svg>
+                      </button>
+
+                      <DateInput value={idea.date} onChange={(date) => updateIdea(idea.id, { date })} />
+
+                      <div className="relative" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => setMoveMenuOpen(moveMenuOpen === `idea-${idea.id}` ? null : `idea-${idea.id}`)}
+                          className="px-2 py-1 rounded text-[10px] text-slate-400 hover:bg-slate-100"
+                        >
+                          Move
+                        </button>
+                        {moveMenuOpen === `idea-${idea.id}` && projects.length > 0 && (
+                          <MoveMenu onMoveToProject={(projectId) => moveIdeaToProject(idea, projectId)} currentProjectId={null} />
+                        )}
+                      </div>
+
+                      <button onClick={() => ideaToProject(idea)} className="px-2 py-1 rounded text-[10px] text-slate-400 hover:bg-slate-100">
+                        → Project
+                      </button>
+
+                      <button onClick={() => deleteIdea(idea.id)} className="p-1 rounded text-slate-300 hover:text-red-500">
+                        <TrashIcon />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {ideas.length === 0 && (
+                <div className="text-sm text-slate-400 text-center py-8">Start planting seeds!</div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Project */}
+        {activeProject && !detailView && (
+          <>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg flex items-center justify-center text-white" style={{ backgroundColor: activeProject.color }}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                </svg>
+              </div>
+              <input
+                type="text"
+                value={activeProject.name}
+                onChange={(e) => updateProjectName(activeProject.id, e.target.value)}
+                className="flex-1 text-sm font-semibold text-slate-800 bg-transparent focus:outline-none min-w-0"
+              />
+              <button onClick={() => deleteProject(activeProject.id)} className="p-1 text-slate-300 hover:text-red-500">
+                <TrashIcon />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto">
+              <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-start gap-3">
+                  <div className="w-5 h-5 mt-0.5 flex-shrink-0" />
+                  <textarea
+                    value={newItemTexts[activeProject.id] || ''}
+                    onChange={(e) => setNewItemTexts({ ...newItemTexts, [activeProject.id]: e.target.value })}
+                    rows={1}
+                    placeholder="Add new item..."
+                    className="flex-1 bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none resize-none leading-relaxed"
+                    style={{ fieldSizing: 'content' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addItemToProject(activeProject.id); } }}
+                  />
+                  <button
+                    onClick={() => addItemToProject(activeProject.id)}
+                    disabled={!newItemTexts[activeProject.id]?.trim()}
+                    className="px-3 py-1 rounded-md text-xs text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                    style={{ backgroundColor: activeProject.color }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {activeProject.items.map(item => (
+                <div key={item.id} className="border-b border-slate-50">
+                  <div className="px-4 py-2 flex items-start gap-3">
+                    <div className="mt-0.5">
+                      <Checkbox checked={item.done} onChange={() => updateItem(activeProject.id, item.id, { done: !item.done })} />
+                    </div>
+
+                    <textarea
+                      value={item.text}
+                      onChange={(e) => updateItem(activeProject.id, item.id, { text: e.target.value })}
+                      rows={1}
+                      className={`flex-1 bg-transparent text-sm focus:outline-none min-w-0 resize-none leading-relaxed ${item.done ? 'line-through text-slate-400' : 'text-slate-700'}`}
+                      style={{ fieldSizing: 'content' }}
+                    />
+
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => setDetailView({ type: 'item', id: item.id, projectId: activeProject.id })}
+                        className={`w-7 h-7 rounded flex items-center justify-center ${item.notes ? 'text-slate-600 bg-slate-100' : 'text-slate-300 hover:text-slate-500 hover:bg-slate-50'}`}
+                        title="Notes"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                        </svg>
+                      </button>
+
+                      <DateInput value={item.date} onChange={(date) => updateItem(activeProject.id, item.id, { date })} />
+
+                      <div className="relative" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => setMoveMenuOpen(moveMenuOpen === `${activeProject.id}-${item.id}` ? null : `${activeProject.id}-${item.id}`)}
+                          className="px-2 py-1 rounded text-[10px] text-slate-400 hover:bg-slate-100"
+                        >
+                          Move
+                        </button>
+                        {moveMenuOpen === `${activeProject.id}-${item.id}` && (
+                          <MoveMenu
+                            onMoveToIdeas={() => moveItemToIdeas(activeProject.id, item)}
+                            onMoveToProject={(targetId) => moveItemToProject(activeProject.id, item, targetId)}
+                            currentProjectId={activeProject.id}
+                          />
+                        )}
+                      </div>
+
+                      <button onClick={() => deleteItem(activeProject.id, item.id)} className="p-1 rounded text-slate-300 hover:text-red-500">
+                        <TrashIcon />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {activeProject.items.length === 0 && (
+                <div className="text-sm text-slate-400 text-center py-8">No items yet</div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* New project modal */}
+        {isAddingProject && (
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { setIsAddingProject(false); setNewProjectName(''); }}>
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">New Project</h3>
+              <input
+                type="text"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newProjectName.trim()) addProject();
+                  if (e.key === 'Escape') { setIsAddingProject(false); setNewProjectName(''); }
+                }}
+                placeholder="What are you working on?"
+                autoFocus
+                className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              />
+              <div className="flex gap-3 mt-4">
+                <button 
+                  onClick={() => { setIsAddingProject(false); setNewProjectName(''); }}
+                  className="flex-1 px-4 py-2.5 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={addProject}
+                  disabled={!newProjectName.trim()}
+                  className="flex-1 px-4 py-2.5 text-sm bg-slate-800 text-white rounded-xl hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Upgrade account modal */}
+        {showUpgrade && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { setShowUpgrade(false); setUpgradeMessage(''); }}>
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-slate-800 mb-2">创建账号</h3>
+              <p className="text-sm text-slate-500 mb-4">保存你的数据，跨设备同步</p>
+              
+              <form onSubmit={handleUpgradeAccount}>
+                <input
+                  type="email"
+                  value={upgradeEmail}
+                  onChange={(e) => setUpgradeEmail(e.target.value)}
+                  placeholder="邮箱"
+                  className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 mb-3"
+                  autoFocus
+                />
+                <input
+                  type="password"
+                  value={upgradePassword}
+                  onChange={(e) => setUpgradePassword(e.target.value)}
+                  placeholder="密码 (至少6位)"
+                  className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 mb-3"
+                />
+                <input
+                  type="password"
+                  value={upgradeConfirmPassword}
+                  onChange={(e) => setUpgradeConfirmPassword(e.target.value)}
+                  placeholder="确认密码"
+                  className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 mb-4"
+                />
+                
+                {upgradeMessage && (
+                  <div className={`p-3 rounded-lg text-sm text-center mb-4 whitespace-pre-wrap ${
+                    upgradeMessageType === 'error' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                  }`}>
+                    {upgradeMessage}
+                  </div>
+                )}
+                
+                <div className="flex gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => { setShowUpgrade(false); setUpgradeMessage(''); }}
+                    className="flex-1 px-4 py-2.5 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={upgradeLoading}
+                    className="flex-1 px-4 py-2.5 text-sm bg-emerald-600 text-white rounded-xl hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+                  >
+                    {upgradeLoading ? '创建中...' : '创建账号'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        
+        {/* Login modal */}
+        {showLogin && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { setShowLogin(false); setLoginMessage(''); setLoginStep('login'); }}>
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+              {loginStep === 'login' && (
+                <>
+                  <h3 className="text-lg font-semibold text-slate-800 mb-2">登录账号</h3>
+                  <p className="text-sm text-slate-500 mb-4">登录后可跨设备同步数据</p>
+                  
+                  <form onSubmit={handleLogin}>
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="邮箱"
+                      className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-3"
+                      autoFocus
+                    />
+                    <input
+                      type="password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="密码"
+                      className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-4"
+                    />
+                    
+                    {loginMessage && (
+                      <div className={`p-3 rounded-lg text-sm text-center mb-4 ${
+                        loginMessage.startsWith('✅') ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                      }`}>
+                        {loginMessage}
+                      </div>
+                    )}
+                    
+                    <div className="flex gap-3 mb-3">
+                      <button 
+                        type="button"
+                        onClick={() => { setShowLogin(false); setLoginMessage(''); }}
+                        className="flex-1 px-4 py-2.5 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button 
+                        type="submit"
+                        disabled={loginLoading}
+                        className="flex-1 px-4 py-2.5 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-500 disabled:opacity-50 transition-colors"
+                      >
+                        {loginLoading ? '登录中...' : '登录'}
+                      </button>
+                    </div>
+                    
+                    <button 
+                      type="button" 
+                      onClick={() => { setLoginStep('forgot'); setLoginMessage(''); }}
+                      className="w-full text-center text-sm text-slate-400 hover:text-slate-600"
+                    >
+                      忘记密码?
+                    </button>
+                  </form>
+                </>
+              )}
+              
+              {loginStep === 'forgot' && (
+                <>
+                  <h3 className="text-lg font-semibold text-slate-800 mb-2">重置密码</h3>
+                  <p className="text-sm text-slate-500 mb-4">输入邮箱，我们会发送重置链接</p>
+                  
+                  <form onSubmit={handleForgotPassword}>
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="邮箱"
+                      className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-4"
+                      autoFocus
+                    />
+                    
+                    {loginMessage && (
+                      <div className={`p-3 rounded-lg text-sm text-center mb-4 ${
+                        loginMessage.startsWith('✅') ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                      }`}>
+                        {loginMessage}
+                      </div>
+                    )}
+                    
+                    <div className="flex gap-3">
+                      <button 
+                        type="button"
+                        onClick={() => { setLoginStep('login'); setLoginMessage(''); }}
+                        className="flex-1 px-4 py-2.5 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+                      >
+                        ← 返回
+                      </button>
+                      <button 
+                        type="submit"
+                        disabled={loginLoading}
+                        className="flex-1 px-4 py-2.5 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-500 disabled:opacity-50 transition-colors"
+                      >
+                        {loginLoading ? '发送中...' : '发送邮件'}
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Password Reset modal (from email link) */}
+        {showPasswordReset && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+              <h3 className="text-lg font-semibold text-slate-800 mb-2">重置密码</h3>
+              <p className="text-sm text-slate-500 mb-4">请设置您的新密码</p>
+              
+              <form onSubmit={handlePasswordReset}>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="新密码 (至少6位)"
+                  className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 mb-3"
+                  autoFocus
+                />
+                <input
+                  type="password"
+                  value={resetConfirmPassword}
+                  onChange={(e) => setResetConfirmPassword(e.target.value)}
+                  placeholder="确认新密码"
+                  className="w-full px-4 py-3 text-base text-slate-700 bg-slate-50 rounded-xl placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 mb-4"
+                />
+                
+                {resetMessage && (
+                  <div className={`p-3 rounded-lg text-sm text-center mb-4 ${
+                    resetMessage.startsWith('✅') ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                  }`}>
+                    {resetMessage}
+                  </div>
+                )}
+                
+                <button 
+                  type="submit"
+                  disabled={resetLoading}
+                  className="w-full px-4 py-3 text-sm bg-emerald-600 text-white rounded-xl hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+                >
+                  {resetLoading ? '重置中...' : '重置密码'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// Root App with Auth
+// ============================================
+const App = () => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+
+  useEffect(() => {
+    // 清除 URL 中的参数
+    const cleanUrl = () => {
+      if (window.location.hash || window.location.search) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    };
+
+    // 监听认证状态变化 - 这是处理密码重置的关键
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth event:', event);
+      
+      if (event === 'PASSWORD_RECOVERY') {
+        // 密码重置链接被点击
+        localStorage.removeItem('seed-local-guest');
+        setUser(session?.user);
+        setShowPasswordReset(true);
+        setLoading(false);
+        cleanUrl();
+        return;
+      }
+      
+      if (event === 'SIGNED_IN' && session?.user) {
+        // 如果有本地游客，不更新（除非是密码恢复）
+        if (!localStorage.getItem('seed-local-guest')) {
+          setUser(session.user);
+        }
+      }
+    });
+
+    // 初始化：检查当前会话
+    const initAuth = async () => {
+      // 检查 URL 是否有 recovery 参数
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const type = hashParams.get('type');
+      const hashType = hashParams.get('type');
+      const queryParams = new URLSearchParams(window.location.search);
+      const code = queryParams.get('code');
+      const queryType = queryParams.get('type');
+      
+      const tokenHash = queryParams.get('token_hash');
+      const errorDescription = queryParams.get('error_description');
+      
+      // 调试信息
+      console.log('URL Debug:', {
+        hash: window.location.hash,
+        search: window.location.search,
+        hashType,
+        queryType,
+        code: code ? 'exists' : 'none',
+        tokenHash: tokenHash ? 'exists' : 'none'
+      });
+      
+      // 如果有 token_hash 和 type=recovery，这是邮件重置链接
+      if (tokenHash && queryType === 'recovery') {
+        console.log('Token hash recovery detected');
+        localStorage.removeItem('seed-local-guest');
+        // Supabase 会自动处理 token_hash，我们只需要等待 session
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (session?.user) {
+          setUser(session.user);
+          setShowPasswordReset(true);
+          cleanUrl();
+          setLoading(false);
+          return;
+        } else {
+          // 尝试验证 token
+          const { data, error } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery'
+          });
+          if (!error && data?.session) {
+            setUser(data.session.user);
+            setShowPasswordReset(true);
+            cleanUrl();
+            setLoading(false);
+            return;
+          }
+          console.error('Token verification error:', error);
+        }
+      }
+      
+      // 如果有 code 参数，让 Supabase 处理
+      if (code) {
+        console.log('Processing code parameter...');
+        localStorage.removeItem('seed-local-guest');
+        try {
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          console.log('Code exchange result:', { data: data ? 'success' : 'null', error });
+          if (!error && data?.session) {
+            setUser(data.session.user);
+            // 检查 URL 是否包含 recovery 类型
+            if (queryType === 'recovery' || hashType === 'recovery') {
+              console.log('Recovery type detected, showing reset modal');
+              setShowPasswordReset(true);
+            }
+          } else if (error) {
+            console.error('Code exchange error:', error);
+          }
+          cleanUrl();
+          setLoading(false);
+          return;
+        } catch (e) {
+          console.error('Code exchange exception:', e);
+        }
+      }
+      
+      // 如果 hash 有 recovery type
+      if (type === 'recovery') {
+        localStorage.removeItem('seed-local-guest');
+        // 让 Supabase 自动处理 hash 中的 token
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          setUser(session.user);
+          setShowPasswordReset(true);
+          cleanUrl();
+          setLoading(false);
+          return;
+        }
+      }
+
+      // 先检查本地游客
+      const localGuest = localStorage.getItem('seed-local-guest');
+      if (localGuest) {
+        try {
+          setUser(JSON.parse(localGuest));
+          setLoading(false);
+          return;
+        } catch (e) {
+          localStorage.removeItem('seed-local-guest');
+        }
+      }
+
+      // Check current Supabase session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        // 已登录用户
+        setUser(session.user);
+      } else {
+        // 没有登录，自动创建本地游客
+        const guestUser = {
+          id: 'local-guest-' + Date.now(),
+          is_anonymous: true,
+          is_local_guest: true
+        };
+        localStorage.setItem('seed-local-guest', JSON.stringify(guestUser));
+        setUser(guestUser);
+      }
+      setLoading(false);
+    };
+
+    initAuth();
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Register service worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(console.error);
+    }
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-5xl">🌱</div>
+      </div>
+    );
+  }
+
+  return <SeedApp user={user} initialShowPasswordReset={showPasswordReset} />;
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+  </script>
+</body>
+</html>
+

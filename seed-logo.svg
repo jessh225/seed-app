@@ -1,0 +1,49 @@
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with subtle gradient -->
+  <rect width="400" height="400" rx="90" fill="url(#bgGrad)"/>
+  
+  <g transform="translate(200, 200)">
+    <!-- Soft outer glow -->
+    <circle cx="0" cy="0" r="110" fill="url(#softGlow)" opacity="0.5"/>
+    
+    <!-- Outer ring - thinner, elegant -->
+    <circle cx="0" cy="0" r="95" stroke="url(#ringGrad)" stroke-width="1.5" fill="none"/>
+    
+    <!-- Middle ring -->
+    <circle cx="0" cy="0" r="70" stroke="url(#ringGrad)" stroke-width="1" fill="none" opacity="0.5"/>
+    
+    <!-- Seed drop shape - more refined -->
+    <path d="M0 -65 Q28 -15 0 55 Q-28 -15 0 -65Z" fill="url(#seedGrad)"/>
+    
+    <!-- Inner highlight -->
+    <path d="M0 -50 Q15 -20 0 30 Q-15 -20 0 -50Z" fill="url(#innerGrad)" opacity="0.4"/>
+    
+    <!-- Top sparkle -->
+    <circle cx="0" cy="-48" r="5" fill="white"/>
+    <circle cx="0" cy="-48" r="8" fill="white" opacity="0.3"/>
+  </g>
+  
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fefefe"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+    <linearGradient id="seedGrad" x1="0" y1="-65" x2="0" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="50%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="innerGrad" x1="0" y1="-50" x2="0" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="white"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ringGrad" x1="0" y1="-100" x2="0" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d1d5db"/>
+      <stop offset="100%" stop-color="#e5e7eb"/>
+    </linearGradient>
+    <radialGradient id="softGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+</svg>
