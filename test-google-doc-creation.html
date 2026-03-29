@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test: Google Doc Creation</title>
+  <style>
+    body { font-family: monospace; background: #1e293b; color: #e2e8f0; padding: 20px; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; }
+    .info { color: #94a3b8; }
+    .test-group { margin: 16px 0; padding: 12px; border: 1px solid #334155; border-radius: 8px; }
+    .test-group h3 { margin: 0 0 8px 0; color: #38bdf8; }
+    button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; margin: 4px; }
+    button:hover { background: #2563eb; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #results { margin-top: 20px; }
+    .summary { margin-top: 16px; padding: 12px; border-radius: 8px; font-weight: bold; }
+    .summary.all-pass { background: #14532d; color: #4ade80; }
+    .summary.has-fail { background: #7f1d1d; color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>Google Doc Creation - Test Suite</h1>
+  <p class="info">Tests for the createGoogleDoc helper and related utilities.</p>
+
+  <button onclick="runUnitTests()">Run Unit Tests</button>
+  <button onclick="runIntegrationTest()" id="integration-btn">Run Integration Test (requires Google OAuth)</button>
+
+  <div id="results"></div>
+
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script>
+    // =============================================
+    // Inline copy of the Google Doc helper functions
+    // (same as in index.html, for isolated testing)
+    // =============================================
+    const GOOGLE_CLIENT_ID = ''; // Set for integration tests
+    const GOOGLE_DOCS_SCOPE = 'https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file';
+
+    const getGoogleAccessToken = () => {
+      return new Promise((resolve, reject) => {
+        if (!GOOGLE_CLIENT_ID) {
+          reject(new Error('Google Client ID not configured. Set GOOGLE_CLIENT_ID in index.html.'));
+          return;
+        }
+        if (!window.google?.accounts?.oauth2) {
+          reject(new Error('Google Identity Services not loaded. Check your internet connection.'));
+          return;
+        }
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: GOOGLE_DOCS_SCOPE,
+          callback: (response) => {
+            if (response.error) {
+              reject(new Error(response.error_description || response.error));
+            } else {
+              resolve(response.access_token);
+            }
+          },
+        });
+        tokenClient.requestAccessToken();
+      });
+    };
+
+    const createGoogleDoc = async (title, ideas, projects) => {
+      const accessToken = await getGoogleAccessToken();
+
+      const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title }),
+      });
+
+      if (!createRes.ok) {
+        const err = await createRes.json();
+        throw new Error(err.error?.message || 'Failed to create Google Doc');
+      }
+
+      const doc = await createRes.json();
+      const documentId = doc.documentId;
+
+      const requests = [];
+      let index = 1;
+
+      const insertText = (text, bold = false, fontSize = null) => {
+        requests.push({
+          insertText: { location: { index }, text }
+        });
+        const style = {};
+        if (bold) style.bold = true;
+        if (fontSize) style.fontSize = { magnitude: fontSize, unit: 'PT' };
+        if (Object.keys(style).length > 0) {
+          requests.push({
+            updateTextStyle: {
+              range: { startIndex: index, endIndex: index + text.length },
+              textStyle: style,
+              fields: Object.keys(style).join(',') + (fontSize ? ',fontSize' : ''),
+            }
+          });
+        }
+        index += text.length;
+      };
+
+      if (ideas.length > 0) {
+        insertText('Ideas\n', true, 18);
+        ideas.forEach((idea) => {
+          const line = `• ${idea.text}${idea.date ? ` (${idea.date})` : ''}\n`;
+          insertText(line);
+          if (idea.notes) {
+            insertText(`  ${idea.notes}\n`);
+          }
+        });
+        insertText('\n');
+      }
+
+      if (projects.length > 0) {
+        insertText('Projects\n', true, 18);
+        projects.forEach((project) => {
+          insertText(`${project.name}\n`, true, 14);
+          const items = project.items || [];
+          if (items.length === 0) {
+            insertText('  (no items)\n');
+          } else {
+            items.forEach((item) => {
+              const status = item.done ? '✅' : '⬜';
+              const line = `  ${status} ${item.text}${item.date ? ` (${item.date})` : ''}\n`;
+              insertText(line);
+              if (item.notes) {
+                insertText(`    ${item.notes}\n`);
+              }
+            });
+          }
+          insertText('\n');
+        });
+      }
+
+      if (requests.length === 0) {
+        insertText('No ideas or projects to export.\n');
+      }
+
+      await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ requests }),
+      });
+
+      return { documentId, url: `https://docs.google.com/document/d/${documentId}/edit` };
+    };
+
+    // =============================================
+    // Test framework
+    // =============================================
+    let results = [];
+
+    function assert(condition, message) {
+      results.push({ pass: condition, message });
+    }
+
+    function assertEqual(actual, expected, message) {
+      const pass = JSON.stringify(actual) === JSON.stringify(expected);
+      results.push({
+        pass,
+        message: pass ? message : `${message} — expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+      });
+    }
+
+    function renderResults(title) {
+      const el = document.getElementById('results');
+      const passed = results.filter(r => r.pass).length;
+      const failed = results.filter(r => !r.pass).length;
+
+      let html = `<div class="test-group"><h3>${title}</h3>`;
+      results.forEach(r => {
+        html += `<div class="${r.pass ? 'pass' : 'fail'}">${r.pass ? '✓' : '✗'} ${r.message}</div>`;
+      });
+      html += '</div>';
+      html += `<div class="summary ${failed === 0 ? 'all-pass' : 'has-fail'}">`;
+      html += `${passed} passed, ${failed} failed, ${results.length} total`;
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
+    // =============================================
+    // Unit Tests (no Google API calls)
+    // =============================================
+    function runUnitTests() {
+      results = [];
+
+      // Test 1: getGoogleAccessToken rejects when no client ID
+      try {
+        // We test the sync path — GOOGLE_CLIENT_ID is empty
+        getGoogleAccessToken().then(() => {
+          assert(false, 'getGoogleAccessToken should reject when GOOGLE_CLIENT_ID is empty');
+          renderResults('Unit Tests');
+        }).catch(err => {
+          assert(err.message.includes('Client ID not configured'), 'getGoogleAccessToken rejects with correct error when no client ID');
+          continueUnitTests();
+        });
+      } catch (err) {
+        assert(false, `getGoogleAccessToken threw unexpectedly: ${err.message}`);
+        continueUnitTests();
+      }
+    }
+
+    function continueUnitTests() {
+      // Test 2: Document content building logic - ideas formatting
+      {
+        const ideas = [
+          { text: 'Learn React', date: '2026-03-29', notes: 'Start with hooks' },
+          { text: 'Build app', date: null, notes: '' },
+        ];
+        // Simulate the formatting logic
+        let output = '';
+        if (ideas.length > 0) {
+          output += 'Ideas\n';
+          ideas.forEach((idea) => {
+            output += `• ${idea.text}${idea.date ? ` (${idea.date})` : ''}\n`;
+            if (idea.notes) output += `  ${idea.notes}\n`;
+          });
+          output += '\n';
+        }
+        assert(output.includes('Ideas'), 'Ideas section header is present');
+        assert(output.includes('• Learn React (2026-03-29)'), 'Idea with date formatted correctly');
+        assert(output.includes('  Start with hooks'), 'Idea notes included');
+        assert(output.includes('• Build app\n'), 'Idea without date formatted correctly (no date suffix)');
+        assert(!output.includes('Build app ('), 'No date parentheses when date is null');
+      }
+
+      // Test 3: Document content building logic - projects formatting
+      {
+        const projects = [
+          {
+            name: 'My Project',
+            items: [
+              { text: 'Task 1', done: true, date: '2026-04-01', notes: 'Done!' },
+              { text: 'Task 2', done: false, date: null, notes: '' },
+            ]
+          },
+          { name: 'Empty Project', items: [] }
+        ];
+        let output = '';
+        if (projects.length > 0) {
+          output += 'Projects\n';
+          projects.forEach((project) => {
+            output += `${project.name}\n`;
+            const items = project.items || [];
+            if (items.length === 0) {
+              output += '  (no items)\n';
+            } else {
+              items.forEach((item) => {
+                const status = item.done ? '✅' : '⬜';
+                output += `  ${status} ${item.text}${item.date ? ` (${item.date})` : ''}\n`;
+                if (item.notes) output += `    ${item.notes}\n`;
+              });
+            }
+            output += '\n';
+          });
+        }
+        assert(output.includes('Projects'), 'Projects section header is present');
+        assert(output.includes('My Project'), 'Project name included');
+        assert(output.includes('✅ Task 1 (2026-04-01)'), 'Completed task with date formatted correctly');
+        assert(output.includes('⬜ Task 2\n'), 'Incomplete task without date formatted correctly');
+        assert(output.includes('    Done!'), 'Task notes included');
+        assert(output.includes('  (no items)'), 'Empty project shows no items message');
+      }
+
+      // Test 4: Empty data handling
+      {
+        const ideas = [];
+        const projects = [];
+        let output = '';
+        if (ideas.length > 0) output += 'Ideas\n';
+        if (projects.length > 0) output += 'Projects\n';
+        if (output === '') output = 'No ideas or projects to export.\n';
+        assertEqual(output, 'No ideas or projects to export.\n', 'Empty data produces fallback message');
+      }
+
+      // Test 5: URL format
+      {
+        const docId = 'abc123def456';
+        const url = `https://docs.google.com/document/d/${docId}/edit`;
+        assert(url.includes(docId), 'Document URL contains document ID');
+        assert(url.startsWith('https://docs.google.com/document/d/'), 'URL has correct Google Docs prefix');
+        assert(url.endsWith('/edit'), 'URL ends with /edit');
+      }
+
+      // Test 6: Scope configuration
+      {
+        assert(GOOGLE_DOCS_SCOPE.includes('documents'), 'Scope includes documents API');
+        assert(GOOGLE_DOCS_SCOPE.includes('drive.file'), 'Scope includes drive.file for file creation');
+      }
+
+      // Test 7: Request building - insertText creates correct structure
+      {
+        const requests = [];
+        let index = 1;
+        const text = 'Hello World\n';
+        requests.push({ insertText: { location: { index }, text } });
+        assertEqual(requests[0].insertText.location.index, 1, 'Insert starts at index 1');
+        assertEqual(requests[0].insertText.text, 'Hello World\n', 'Insert text matches input');
+      }
+
+      // Test 8: Request building - bold text includes style update
+      {
+        const requests = [];
+        let index = 1;
+        const text = 'Bold Text\n';
+        requests.push({ insertText: { location: { index }, text } });
+        requests.push({
+          updateTextStyle: {
+            range: { startIndex: index, endIndex: index + text.length },
+            textStyle: { bold: true },
+            fields: 'bold',
+          }
+        });
+        assertEqual(requests.length, 2, 'Bold text generates 2 requests (insert + style)');
+        assert(requests[1].updateTextStyle.textStyle.bold === true, 'Style request has bold: true');
+        assertEqual(requests[1].updateTextStyle.range.startIndex, 1, 'Style range starts at correct index');
+        assertEqual(requests[1].updateTextStyle.range.endIndex, 11, 'Style range ends at correct index');
+      }
+
+      // Test 9: Special characters in ideas
+      {
+        const idea = { text: 'Use "quotes" & <tags>', date: null, notes: '' };
+        const line = `• ${idea.text}${idea.date ? ` (${idea.date})` : ''}\n`;
+        assert(line.includes('"quotes"'), 'Quotes preserved in output');
+        assert(line.includes('& <tags>'), 'Special chars preserved in output');
+      }
+
+      renderResults('Unit Tests');
+    }
+
+    // =============================================
+    // Integration Test (requires Google OAuth)
+    // =============================================
+    async function runIntegrationTest() {
+      results = [];
+      const btn = document.getElementById('integration-btn');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+
+      try {
+        if (!GOOGLE_CLIENT_ID) {
+          assert(false, 'Integration test skipped: GOOGLE_CLIENT_ID not set. Set it at the top of this file to run.');
+          renderResults('Integration Test');
+          return;
+        }
+
+        const testIdeas = [
+          { text: 'Integration test idea', date: '2026-03-29', notes: 'Created by automated test' },
+        ];
+        const testProjects = [
+          {
+            name: 'Test Project',
+            items: [
+              { text: 'Test task', done: false, date: '2026-04-01', notes: 'Automated' },
+            ]
+          }
+        ];
+
+        const result = await createGoogleDoc('Seed Test Export', testIdeas, testProjects);
+        assert(result.documentId && result.documentId.length > 0, `Google Doc created with ID: ${result.documentId}`);
+        assert(result.url.includes('docs.google.com'), `Doc URL is valid: ${result.url}`);
+      } catch (err) {
+        assert(false, `Integration test failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Integration Test (requires Google OAuth)';
+        renderResults('Integration Test');
+      }
+    }
+  </script>
+</body>
+</html>

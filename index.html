@@ -18,6 +18,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   
   <style>
     * { -webkit-tap-highlight-color: transparent; }
@@ -52,6 +53,134 @@ const { useState, useEffect, useRef } = React;
 const SUPABASE_URL = 'https://tmexfyneflagcklgpnam.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtZXhmeW5lZmxhZ2NrbGdwbmFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0OTY1MDgsImV4cCI6MjA4MzA3MjUwOH0.5PX7dSfS-ZdQ9_nAnNQuDGU_OcHNZXmkwfrKVT0Ov8k';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ============================================
+// Google Docs Configuration & Helpers
+// ============================================
+const GOOGLE_CLIENT_ID = ''; // Set your Google Cloud OAuth 2.0 Client ID here
+const GOOGLE_DOCS_SCOPE = 'https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file';
+
+const getGoogleAccessToken = () => {
+  return new Promise((resolve, reject) => {
+    if (!GOOGLE_CLIENT_ID) {
+      reject(new Error('Google Client ID not configured. Set GOOGLE_CLIENT_ID in index.html.'));
+      return;
+    }
+    if (!window.google?.accounts?.oauth2) {
+      reject(new Error('Google Identity Services not loaded. Check your internet connection.'));
+      return;
+    }
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: GOOGLE_DOCS_SCOPE,
+      callback: (response) => {
+        if (response.error) {
+          reject(new Error(response.error_description || response.error));
+        } else {
+          resolve(response.access_token);
+        }
+      },
+    });
+    tokenClient.requestAccessToken();
+  });
+};
+
+const createGoogleDoc = async (title, ideas, projects) => {
+  const accessToken = await getGoogleAccessToken();
+
+  // Create the document
+  const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ title }),
+  });
+
+  if (!createRes.ok) {
+    const err = await createRes.json();
+    throw new Error(err.error?.message || 'Failed to create Google Doc');
+  }
+
+  const doc = await createRes.json();
+  const documentId = doc.documentId;
+
+  // Build document content
+  const requests = [];
+  let index = 1;
+
+  // Helper to insert text and advance index
+  const insertText = (text, bold = false, fontSize = null) => {
+    requests.push({
+      insertText: { location: { index }, text }
+    });
+    const style = {};
+    if (bold) style.bold = true;
+    if (fontSize) style.fontSize = { magnitude: fontSize, unit: 'PT' };
+    if (Object.keys(style).length > 0) {
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex: index, endIndex: index + text.length },
+          textStyle: style,
+          fields: Object.keys(style).join(',') + (fontSize ? ',fontSize' : ''),
+        }
+      });
+    }
+    index += text.length;
+  };
+
+  // Title section: Ideas
+  if (ideas.length > 0) {
+    insertText('Ideas\n', true, 18);
+    ideas.forEach((idea) => {
+      const line = `• ${idea.text}${idea.date ? ` (${idea.date})` : ''}\n`;
+      insertText(line);
+      if (idea.notes) {
+        insertText(`  ${idea.notes}\n`);
+      }
+    });
+    insertText('\n');
+  }
+
+  // Title section: Projects
+  if (projects.length > 0) {
+    insertText('Projects\n', true, 18);
+    projects.forEach((project) => {
+      insertText(`${project.name}\n`, true, 14);
+      const items = project.items || [];
+      if (items.length === 0) {
+        insertText('  (no items)\n');
+      } else {
+        items.forEach((item) => {
+          const status = item.done ? '✅' : '⬜';
+          const line = `  ${status} ${item.text}${item.date ? ` (${item.date})` : ''}\n`;
+          insertText(line);
+          if (item.notes) {
+            insertText(`    ${item.notes}\n`);
+          }
+        });
+      }
+      insertText('\n');
+    });
+  }
+
+  if (requests.length === 0) {
+    insertText('No ideas or projects to export.\n');
+  }
+
+  // Apply content to the document
+  await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requests }),
+  });
+
+  return { documentId, url: `https://docs.google.com/document/d/${documentId}/edit` };
+};
 
 // ============================================
 // Login Screen Component
@@ -481,6 +610,10 @@ const SeedApp = ({ user, initialShowPasswordReset = false }) => {
   const [upgradeMessage, setUpgradeMessage] = useState('');
   const [upgradeMessageType, setUpgradeMessageType] = useState('error');
   
+  // Google Doc export state
+  const [exportingDoc, setExportingDoc] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
+
   // Login modal state
   const [showLogin, setShowLogin] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
@@ -947,6 +1080,23 @@ const SeedApp = ({ user, initialShowPasswordReset = false }) => {
     window.location.reload();
   };
   
+  // Export to Google Doc
+  const handleExportGoogleDoc = async () => {
+    setExportingDoc(true);
+    setExportMessage('');
+    try {
+      const title = `Seed Export - ${new Date().toLocaleDateString()}`;
+      const result = await createGoogleDoc(title, ideas, projects);
+      setExportMessage('✅ Google Doc created!');
+      window.open(result.url, '_blank');
+    } catch (err) {
+      setExportMessage(`❌ ${err.message}`);
+    } finally {
+      setExportingDoc(false);
+      setTimeout(() => setExportMessage(''), 5000);
+    }
+  };
+
   // Upgrade anonymous account
   const handleUpgradeAccount = async (e) => {
     e.preventDefault();
@@ -1352,6 +1502,23 @@ const SeedApp = ({ user, initialShowPasswordReset = false }) => {
                 </>
               )}
               
+              <button
+                onClick={() => { setShowSettings(false); handleExportGoogleDoc(); }}
+                disabled={exportingDoc}
+                className="w-full px-4 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+                {exportingDoc ? 'Exporting...' : 'Export to Google Doc'}
+              </button>
+
+              {exportMessage && (
+                <div className="px-4 py-2 text-xs text-center text-slate-600">
+                  {exportMessage}
+                </div>
+              )}
+
               {!isLocalGuest && (
                 <button
                   onClick={handleLogout}
